@@ -13,6 +13,13 @@
 extern char **environ;
 
 
+
+#define MAX_CHILDREN 100     // максимальное число дочерних процессов
+
+static pid_t children[MAX_CHILDREN];
+static int child_count = 0;
+
+
 // Запуск дочернего процесса
 static void execChild(int num, const char *env_file, char **envp) {
     
@@ -38,23 +45,35 @@ static void execChild(int num, const char *env_file, char **envp) {
         if (env_file) {
             argv[1] = (char *)env_file; 
         }
+        
         execve(child_path, argv, envp);
         perror("execve failed");
         exit(EXIT_FAILURE);
     } 
-    else { 
-        wait(NULL);
+        else { 
+        if (child_count < MAX_CHILDREN) {
+            children[child_count++] = pid;
+            printf("Created child PID: %d\n", pid);
+        } else {
+            fprintf(stderr, "Maximum children limit reached\n");
+        }
     }
 }
 
+
+static void killLastChild() {
+    if (child_count > 0) {
+        pid_t pid = children[--child_count];
+        printf("Killing child PID: %d\n", pid);
+        kill(pid, SIGTERM);
+        waitpid(pid, NULL, 0); // Ожидаем завершения
+    } else {
+        printf("No children to kill\n");
+    }
+}
+
+
 int main(int argc, char *argv[]) {
-    // if (argc < 2) {
-    //     fprintf(stderr, "Usage: %s <env_file>\n", argv[0]);
-    //     exit(EXIT_FAILURE);
-    // }
-
-
-  
                 
     int child_count = 0;
     printf("\nCommands:\n+ - new child with custom env\n* - new child with vars\n& - new child with parent env\nq - quit\n");
@@ -67,15 +86,16 @@ int main(int argc, char *argv[]) {
             case '+':
                 execChild(child_count++, argv[1], NULL);
                 break;
-            case '*':
-                execChild(child_count++, NULL, NULL);
-                break;
-            case '&':
-                execChild(child_count++, NULL, environ);
+            case '-':
+                killLastChild();
                 break;
             default:
                 printf("Unknown command: %c\n", ch);
         }
+    }
+
+      while (child_count > 0) {
+        killLastChild();
     }
 
     
