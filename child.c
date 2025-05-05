@@ -1,115 +1,103 @@
-/* parent.c */
+/* child.c */
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <sys/wait.h>
 #include <signal.h>
-
-#define MAX_CHILDREN 100
+#include <sys/time.h>
+#include <unistd.h>
+#include <string.h>
 
 typedef struct {
-    pid_t pid;
-    int number;
-    char name[16];
-} ChildInfo;
+    int a;
+    int b;
+} pair_t;
 
-static ChildInfo children[MAX_CHILDREN];
-static int child_count = 0;
+volatile sig_atomic_t keep_running = 1;
+volatile sig_atomic_t interrupt_count = 0;
+volatile pair_t cur = {0, 0};
 
-static void execChild(int num, const char *env_file, char **envp) {
-    char *child_dir = getenv("CHILD_PATH");
-    if (!child_dir) {
-        fprintf(stderr, "CHILD_PATH environment variable not set\n");
-        return;
-    }
+volatile sig_atomic_t count_00 = 0;
+volatile sig_atomic_t count_01 = 0;
+volatile sig_atomic_t count_10 = 0;
+volatile sig_atomic_t count_11 = 0;
 
-    char child_path[128];
-    snprintf(child_path, sizeof(child_path), "%s/child", child_dir);
+char *child_name;
+struct timeval last_print = {0};
 
-    pid_t pid = fork();
-    if (pid < 0) {
-        perror("fork failed");
-        exit(EXIT_FAILURE);
-    } 
-    else if (pid == 0) { 
-        snprintf(children[child_count].name, sizeof(children[child_count].name), "child_%02d", num);
-        char *argv[3] = {children[child_count].name, NULL, NULL}; 
-        if (env_file) {
-            argv[1] = (char *)env_file; 
-        }
-        
-        execve(child_path, argv, envp);
-        perror("execve failed");
-        exit(EXIT_FAILURE);
-    } 
-    else { 
-        if (child_count < MAX_CHILDREN) {
-            children[child_count].pid = pid;
-            children[child_count].number = num;
-            child_count++;
-            printf("Created child %s (PID: %d)\n", children[child_count-1].name, pid);
-        } else {
-            fprintf(stderr, "Maximum children limit reached\n");
-        }
+void print_stats() {   
+    struct timeval now;
+    gettimeofday(&now, NULL);
+    if (now.tv_sec > last_print.tv_sec || 
+       (now.tv_sec == last_print.tv_sec && now.tv_usec > last_print.tv_usec)) {
+        printf("PID: %-5d Name: %-8s {0,0}=%-3d {0,1}=%-3d {1,0}=%-3d {1,1}=%-3d\n",
+               getpid(), child_name, count_00, count_01, count_10, count_11);
+        last_print = now;
     }
 }
 
-static void killAllChildren() {
-    printf("\nKilling all children:\n");
-    for (int i = 0; i < child_count; i++) {
-        printf("Killing %s (PID: %d)\n", children[i].name, children[i].pid);
-        kill(children[i].pid, SIGTERM);
-        waitpid(children[i].pid, NULL, 0);
+void timer_handler(int signum) {
+    (void)signum;
+    pair_t counter = {cur.a, cur.b};
+
+    if (counter.a == 0 && counter.b == 0) count_00++;
+    else if (counter.a == 0 && counter.b == 1) count_01++;
+    else if (counter.a == 1 && counter.b == 0) count_10++;
+    else if (counter.a == 1 && counter.b == 1) count_11++;
+
+    if (++interrupt_count >= 10) {
+        print_stats();
+        interrupt_count = 0;
+        count_00 = count_01 = count_10 = count_11 = 0;
     }
-    child_count = 0;
 }
 
-static void printChildrenList() {
-    printf("\nActive children (%d):\n", child_count);
-    for (int i = 0; i < child_count; i++) {
-        printf("%s (PID: %d)\n", children[i].name, children[i].pid);
+void sig_handler(int signum) {
+    switch(signum) {
+        case SIGTERM:
+            keep_running = 0;
+            break;
+        case SIGUSR1:
+            print_stats();
+            break;
     }
 }
 
+void setup_timer(void) {
+    struct sigaction sa = {0};
+    sa.sa_handler = timer_handler;
+    sigaction(SIGALRM, &sa, NULL);
+
+    struct sigaction sa_term = {0};
+    sa_term.sa_handler = sig_handler;
+    sigaction(SIGTERM, &sa_term, NULL);
+    sigaction(SIGUSR1, &sa_term, NULL);
+
+    struct itimerval timer = {
+        .it_value = {.tv_sec = 1, .tv_usec = 0},
+        .it_interval = {.tv_sec = 1, .tv_usec = 0}
+    };
+    setitimer(ITIMER_REAL, &timer, NULL);
+}
 
 int main(int argc, char *argv[]) {
-    printf("\nCommands:\n"
-           "+ - new child\n"
-           "- - kill last child\n"
-           "l - list active children\n"
-           "k - kill all children\n"
-           "q - quit\n");
-
-    int ch;
-    int child_number = 0;
-    while ((ch = getchar()) != 'q') {
-        if (ch == '\n') continue;
+    setup_timer();
+    child_name = argv[0];
+    
+    while(keep_running) {
+        cur.a = 0; 
+        cur.b = 0;
+        usleep(50);
         
-        switch (ch) {
-            case '+':
-                execChild(child_number++, argv[1], NULL);
-                break;
-            case '-':
-                if (child_count > 0) {
-                    pid_t pid = children[--child_count].pid;
-                    printf("Killing %s (PID: %d)\n", children[child_count].name, pid);
-                    kill(pid, SIGTERM);
-                    waitpid(pid, NULL, 0);
-                }
-                break;
-            case 'l':
-                printChildrenList();
-                break;
-            case 'k':
-                killAllChildren();
-                child_number = 0;
-                break;
-            default:
-                printf("Unknown command: %c\n", ch);
-        }
+        cur.a = 1; 
+        usleep(50);
+        
+        cur.b = 1;
+        usleep(50);
+        
+        usleep(100);
     }
 
-    killAllChildren();
-    return EXIT_SUCCESS;
+    struct itimerval timer = {0};
+    setitimer(ITIMER_REAL, &timer, NULL);
+    printf("%s (PID: %d) terminated\n", child_name, getpid());
+    return 0;
 }
