@@ -1,19 +1,31 @@
-CC = gcc
+CC := gcc
 
-CFLAGS = -c -W -Wall -Wextra
+MODE ?= debug
 
-.PHONY:all
-all: start
+ifeq ($(MODE),release)
+    CFLAGS    := -std=c11 -pedantic -W -Wall -Wextra -Werror -O2
+    BUILD_DIR := build/release
+else
+    CFLAGS    := -g -ggdb -std=c11 -pedantic -W -Wall -Wextra
+    BUILD_DIR := build/debug
+endif
 
-start:	parent.o child.o
-	$(CC) parent.o -o parent
-	$(CC) child.o -o child
-	
-parent.o: parent.c
-	$(CC) $(CFLAGS) parent.c
-	
-child.o: child.c
-	$(CC) $(CFLAGS) child.c
+TARGET_PARENT := $(BUILD_DIR)/parent
+TARGET_CHILD  := $(BUILD_DIR)/child
+
+.PHONY: all clean
+
+all: $(TARGET_PARENT) $(TARGET_CHILD)
+
+$(BUILD_DIR):
+	@mkdir -p $(BUILD_DIR)  # ТАБУЛЯЦИЯ
+
+$(TARGET_PARENT): src/parent.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $< -o $@  # ТАБУЛЯЦИЯ
+
+$(TARGET_CHILD): src/child.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $< -o $@  # ТАБУЛЯЦИЯ
 
 clean:
-	rm -rf *.o parent child	
+	@[ -d build/debug ] && find build/debug -mindepth 1 ! -name .gitignore -exec rm -rf {} + || true
+	@[ -d build/release ] && find build/release -mindepth 1 ! -name .gitignore -exec rm -rf {} + || true

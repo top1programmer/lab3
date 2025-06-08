@@ -1,4 +1,4 @@
-child
-child.o
-parent  
-parent.o
+/build/release/parent
+/build/release/child
+/build/debug/parent
+/build/debug/child
